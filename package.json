@@ -1,3 +1,11 @@
 {
-    "name": "@authbound/pid-issuer"
+    "name": "@authbound/pid-issuer",
+    "scripts": {
+        "dev": "docker compose -f docker-compose/docker-compose.yaml up",
+        "dev:detached": "docker compose -f docker-compose/docker-compose.yaml up -d",
+        "stop": "docker compose -f docker-compose/docker-compose.yaml down",
+        "build": "docker compose -f docker-compose/docker-compose.yaml build",
+        "logs": "docker compose -f docker-compose/docker-compose.yaml logs -f",
+        "clean": "docker compose -f docker-compose/docker-compose.yaml down -v"
+    }
 }
