@@ -15,10 +15,10 @@ the [EUDI Wallet Reference Implementation project description](https://github.co
 
 ## Overview
 
-An implementation of a credential issuing service, according to OpenId4VCI - draft14
+An implementation of a credential issuing service, according to [OpenId4VCI - draft15](https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0-15.html).
 
 The service provides generic support for `mso_mdoc` and `SD-JWT-VC` formats using PID and mDL as an example
-and requires the use of a suitable OAUTH2 server.
+and requires the use of a suitable OAuth 2.0 server.
 
 | Credential/Attestation | Format    |
 |------------------------|-----------|
@@ -28,18 +28,22 @@ and requires the use of a suitable OAUTH2 server.
 
 ### OpenId4VCI coverage
 
-| Feature                                                   | Coverage                                                           |
-|-----------------------------------------------------------|--------------------------------------------------------------------|
-| Authorization Code flow                                   | ✅ Using a suitable OAUTH2 server                                   |
-| Pre-authorized code flow                                  | ❌                                                                  |
-| mso_mdoc format                                           | ✅                                                                  |
-| SD-JWT-VC format                                          | ✅ Except revocation list & meta                                    |
-| W3C VC DM                                                 | ❌                                                                  |
-| Credential Offer                                          | ✅ `authorization_code` , ❌ `pre-authorized_code`                   |
-| [Credential Endpoint](#credential-endpoint)               | Yes, including multiple proofs, encryption, repeatable invocations |
-| [Credential Issuer MetaData](#credential-issuer-metadata) | Yes, using `scopes`                                                | 
-| Deferred Endpoint                                         | ✅                                                                  |
-| Proof                                                     | ✅ JWT (`jwk`, `x5c`, `did:key`, `did:jwk`)                         |
+| Feature                                                   | Coverage                                                              |
+|-----------------------------------------------------------|-----------------------------------------------------------------------|
+| Authorization Code flow                                   | ✅ Using a suitable OAuth 2.0 server                                   |
+| Pre-authorized code flow                                  | ❌                                                                     |
+| mso_mdoc format                                           | ✅                                                                     |
+| SD-JWT-VC format                                          | ✅ Except revocation list & meta                                       |
+| W3C VC DM                                                 | ❌                                                                     |
+| Credential Offer                                          | ✅ `authorization_code` , ❌ `pre-authorized_code`                      |
+| [Credential Endpoint](#credential-endpoint)               | Yes, including multiple proofs, encryption, repeatable invocations    |
+| [Credential Issuer MetaData](#credential-issuer-metadata) | Yes, using `scopes`, and `signed_metadata`                            | 
+| Deferred Endpoint                                         | ✅                                                                     |
+| Nonce Endpoint                                            | ✅                                                                     |
+| Notification Endpoint                                     | ✅                                                                     |
+| Proof                                                     | ✅ JWT (`jwk`, `x5c`, `did:key`, `did:jwk`) - *Except Key Attestation* |
+|                                                           | ❌ Data Integrity Proof                                                |
+|                                                           | ❌ Key Attestation                                                     |
 
 ## How to use docker
 
@@ -105,11 +109,11 @@ Description: Port for the HTTP listener of the PID Issuer application
 Default value: `8080`
 
 Variable: `SPRING_SECURITY_OAUTH2_RESOURCESERVER_OPAQUETOKEN_CLIENT_ID`  
-Description: Client Id of the OAuth2 client registered in the Authorization Server  
+Description: Client Id of the OAuth 2.0 client registered in the Authorization Server  
 Default value: N/A
 
 Variable: `SPRING_SECURITY_OAUTH2_RESOURCESERVER_OPAQUETOKEN_CLIENT_SECRET`  
-Description: Client Server of the OAuth2 client registered in the Authorization Server  
+Description: Client Server of the OAuth 2.0 client registered in the Authorization Server  
 Default value: N/A
 
 Variable: `SERVER_FORWARD_HEADERS_STRATEGY`  
@@ -120,7 +124,7 @@ Default value: `FRAMEWORK`
 
 Variable: `ISSUER_PUBLICURL`  
 Description: URL the PID Issuer application is accessible from  
-Default value: `http://localhost:${SERVER_PORT}${SPRING_WEBFLUX_BASE_PATH}`
+Default value: `http://localhost:8080`
 
 Variable: `ISSUER_AUTHORIZATIONSERVER_PUBLICURL`  
 Description: URL of the Authorization Server advertised via the issuer metadata    
@@ -172,7 +176,7 @@ Default value: `P30D`
 
 Variable: `ISSUER_PID_SD_JWT_VC_NOTUSEBEFORE`  
 Description: Period after which a PID issued in *SD JWT VC* becomes valid. Used to calculate the value of the `nbf` claim.  
-Default value: `PT20`
+Default value: `PT20S`
 
 Variable: `ISSUER_PID_SD_JWT_VC_DEFERRED`  
 Description: Whether PID issuance in *SD JWT VC* format should be *deferred* or *immediate*.  
@@ -208,28 +212,61 @@ Description: URI to use when generating Credential Offers.
 Default value: `openid-credential-offer://`
 
 Variable: `ISSUER_SIGNING_KEY`  
-Description: Whether to generate a new, or use an existing key-pair for signing.    
+Description: Whether to generate a new, or use an existing key-pair for signing verifiable credentials.    
 Possible values: `GenerateRandom`, `LoadFromKeystore`  
 Default value: `GenerateRandom`
 
 Variable: `ISSUER_SIGNING_KEY_KEYSTORE`  
-Description: Location of the keystore from which to load the key-pair for signing. Uses Spring Resource URL syntax.       
+Description: Location of the keystore from which to load the key-pair for signing verifiable credentials. Uses Spring Resource URL syntax.       
 Default value: N/A
 
 Variable: `ISSUER_SIGNING_KEY_KEYSTORE_TYPE`  
-Description: Type of the keystore from which to load the key-pair for signing.       
+Description: Type of the keystore from which to load the key-pair for signing verifiable credentials.       
 Default value: N/A
 
 Variable: `ISSUER_SIGNING_KEY_KEYSTORE_PASSWORD`  
-Description: Password of the keystore from which to load the key-pair for signing.       
+Description: Password of the keystore from which to load the key-pair for signing verifiable credentials.       
 Default value: N/A
 
 Variable: `ISSUER_SIGNING_KEY_ALIAS`  
-Description: Alias of the key-pair for signing.       
+Description: Alias of the key-pair for signing verifiable credentials.       
 Default value: N/A
 
 Variable: `ISSUER_SIGNING_KEY_PASSWORD`  
-Description: Password of the key-pair for signing.       
+Description: Password of the key-pair for signing verifiable credentials.       
+Default value: N/A
+
+Variable: `ISSUER_METADATA_SIGNED_METADATA_ENABLED`  
+Description: Whether to enable support for signed metadata or not.  
+Default value: `true`  
+
+Variable: `ISSUER_METADATA_SIGNED_METADATA_ISSUER`  
+Description: Value of the `iss` claim of the signed metadata.  
+Default value: Value of `ISSUER_PUBLICURL`
+
+Variable: `ISSUER_METADATA_SIGNED_METADATA_SIGNING_KEY`  
+Description: Whether to generate a new, or use an existing key-pair for signing metadata.    
+Possible values: `GenerateRandom`, `LoadFromKeystore`  
+Default value: `GenerateRandom`
+
+Variable: `ISSUER_METADATA_SIGNED_METADATA_SIGNING_KEY_KEYSTORE`  
+Description: Location of the keystore from which to load the key-pair for signing metadata. Uses Spring Resource URL syntax.       
+Default value: N/A
+
+Variable: `ISSUER_METADATA_SIGNED_METADATA_SIGNING_KEY_KEYSTORE_TYPE`  
+Description: Type of the keystore from which to load the key-pair for signing metadata.       
+Default value: N/A
+
+Variable: `ISSUER_METADATA_SIGNED_METADATA_SIGNING_KEY_KEYSTORE_PASSWORD`  
+Description: Password of the keystore from which to load the key-pair for signing metadata.       
+Default value: N/A
+
+Variable: `ISSUER_METADATA_SIGNED_METADATA_SIGNING_KEY_ALIAS`  
+Description: Alias of the key-pair for signing metadata.       
+Default value: N/A
+
+Variable: `ISSUER_METADATA_SIGNED_METADATA_SIGNING_KEY_PASSWORD`  
+Description: Password of the key-pair for signing metadata.       
 Default value: N/A
 
 Variable: `ISSUER_KEYCLOAK_SERVER_URL`  
@@ -243,7 +280,7 @@ Default value: N/A
 Example: master  
 
 Variable: `ISSUER_KEYCLOAK_CLIENT_ID`  
-Description: Id of the OAuth2 client used for management of Keycloak   
+Description: Id of the OAuth 2.0 client used for management of Keycloak   
 Default value: N/A  
 Example: admin-cli  
 
@@ -289,6 +326,20 @@ Default value: `true`
 Variable: `ISSUER_CREDENTIALENDPOINT_BATCHISSUANCE_BATCHSIZE`  
 Description: Maximum length of `proofs` array supported by credential endpoint when batch issuance support is enabled          
 Default value: `10`
+
+Variable: `ISSUER_CNONCE_EXPIRATION`  
+Description: Duration after which CNonce values expire    
+Default value: `PT5M`
+
+Variable: `ISSUER_STATUSLIST_ENABLED`  
+Description: Whether to enable support for Status List Tokens      
+Default value: `false`
+
+Variable: `ISSUER_STATUSLIST_SERVICE_URI`  
+Description: URI of the service used to generate Status List Tokens  
+
+Variable: `ISSUER_STATUSLIST_SERVICE_APIKEY`  
+Description: API Key of the service used to generate Status List Tokens  
 
 ### Metadata configuration
 

@@ -18,6 +18,7 @@ package eu.europa.ec.eudi.pidissuer.adapter.input.web
 import arrow.core.getOrElse
 import eu.europa.ec.eudi.pidissuer.domain.CredentialConfigurationId
 import eu.europa.ec.eudi.pidissuer.domain.CredentialIssuerMetaData
+import eu.europa.ec.eudi.pidissuer.domain.OpenId4VciSpec
 import eu.europa.ec.eudi.pidissuer.port.input.CreateCredentialsOffer
 import eu.europa.ec.eudi.pidissuer.port.out.qr.Dimensions
 import eu.europa.ec.eudi.pidissuer.port.out.qr.Format
@@ -28,7 +29,6 @@ import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.web.reactive.function.server.*
 import kotlin.io.encoding.Base64
-import kotlin.io.encoding.ExperimentalEncodingApi
 
 class IssuerUi(
     private val credentialsOfferUri: String,
@@ -68,11 +68,11 @@ class IssuerUi(
                 mapOf(
                     "credentialIds" to credentialIds,
                     "credentialsOfferUri" to credentialsOfferUri,
+                    "openid4VciVersion" to OpenId4VciSpec.VERSION,
                 ),
             )
     }
 
-    @OptIn(ExperimentalEncodingApi::class)
     private suspend fun handleGenerateCredentialsOffer(request: ServerRequest): ServerResponse {
         log.info("Generating Credentials Offer")
         val formData = request.awaitFormData()
@@ -96,13 +96,20 @@ class IssuerUi(
                         "uri" to credentialsOffer.toString(),
                         "qrCode" to Base64.encode(qrCode),
                         "qrCodeMediaType" to "image/png",
+                        "openid4VciVersion" to OpenId4VciSpec.VERSION,
                     ),
                 )
         }.getOrElse { error ->
             log.warn("Unable to generated Credentials Offer. Error: {}", error)
             ServerResponse.badRequest()
                 .contentType(MediaType.TEXT_HTML)
-                .renderAndAwait("generate-credentials-offer-error", mapOf("error" to error::class.java.canonicalName))
+                .renderAndAwait(
+                    "generate-credentials-offer-error",
+                    mapOf(
+                        "error" to error::class.java.canonicalName,
+                        "openid4VciVersion" to OpenId4VciSpec.VERSION,
+                    ),
+                )
         }
     }
 

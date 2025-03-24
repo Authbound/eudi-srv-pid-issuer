@@ -47,18 +47,20 @@ import eu.europa.ec.eudi.pidissuer.adapter.out.persistence.InMemoryIssuedCredent
 import eu.europa.ec.eudi.pidissuer.adapter.out.pid.*
 import eu.europa.ec.eudi.pidissuer.adapter.out.qr.DefaultGenerateQrCode
 import eu.europa.ec.eudi.pidissuer.adapter.out.signingAlgorithm
+import eu.europa.ec.eudi.pidissuer.adapter.out.status.GenerateStatusListTokenWithExternalService
 import eu.europa.ec.eudi.pidissuer.domain.*
 import eu.europa.ec.eudi.pidissuer.port.input.*
 import eu.europa.ec.eudi.pidissuer.port.out.asDeferred
+import eu.europa.ec.eudi.pidissuer.port.out.jose.GenerateSignedMetadata
 import eu.europa.ec.eudi.pidissuer.port.out.persistence.GenerateNotificationId
 import eu.europa.ec.eudi.pidissuer.port.out.persistence.GenerateTransactionId
+import eu.europa.ec.eudi.pidissuer.port.out.status.GenerateStatusListToken
 import eu.europa.ec.eudi.sdjwt.HashAlgorithm
 import io.netty.handler.ssl.SslContextBuilder
 import io.netty.handler.ssl.util.InsecureTrustManagerFactory
 import jakarta.ws.rs.client.Client
 import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.runBlocking
-import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
 import org.apache.http.conn.ssl.TrustAllStrategy
 import org.apache.http.ssl.SSLContextBuilder
@@ -180,13 +182,13 @@ internal object RestEasyClients {
     }
 }
 
-@OptIn(ExperimentalSerializationApi::class)
 fun beans(clock: Clock) = beans {
     val issuerPublicUrl = env.readRequiredUrl("issuer.publicUrl", removeTrailingSlash = true)
     val enableMobileDrivingLicence = env.getProperty("issuer.mdl.enabled", true)
     val enableMsoMdocPid = env.getProperty<Boolean>("issuer.pid.mso_mdoc.enabled") ?: true
     val enableSdJwtVcPid = env.getProperty<Boolean>("issuer.pid.sd_jwt_vc.enabled") ?: true
     val credentialsOfferUri = env.getRequiredProperty("issuer.credentialOffer.uri")
+    val enableStatusList = env.getProperty<Boolean>("issuer.statusList.enabled") ?: false
 
     //
     // Signing key
@@ -233,6 +235,33 @@ fun beans(clock: Clock) = beans {
         }
         require(encryptionKey is RSAKey) { "Only RSAKeys are supported for encryption" }
         encryptionKey
+    }
+
+    //
+    // Signed metadata signing key
+    //
+    bean(isLazyInit = true) {
+        val key = when (env.getProperty<KeyOption>("issuer.metadata.signed-metadata.signing-key")) {
+            null, KeyOption.GenerateRandom -> {
+                log.info("Generating random signing key for metadata")
+                ECKeyGenerator(Curve.P_256)
+                    .keyID("issuer-kid-1")
+                    .keyUse(KeyUse.SIGNATURE)
+                    .generate()
+            }
+
+            KeyOption.LoadFromKeystore -> {
+                log.info("Loading signing key and certificate for metadata from keystore")
+                loadJwkFromKeystore(env, "issuer.metadata.signed-metadata.signing-key")
+            }
+        }
+
+        val issuer = env.getProperty("issuer.metadata.signed-metadata.issuer")
+            ?.takeIf { it.isNotBlank() }
+            ?.trim()
+            ?: issuerPublicUrl.externalForm
+
+        MetadataSigningKey(key = key, issuer = issuer)
     }
 
     //
@@ -286,9 +315,7 @@ fun beans(clock: Clock) = beans {
     bean<EncodePidInCbor>(isLazyInit = true) {
         log.info("Using internal encoder to encode PID in CBOR")
         val issuerSigningKey = ref<IssuerSigningKey>()
-        val duration = env.getProperty("issuer.pid.mso_mdoc.encoder.duration")
-            ?.let { Duration.parse(it).toKotlinDuration() }
-            ?: 30.days
+        val duration = env.duration("issuer.pid.mso_mdoc.encoder.duration")?.toKotlinDuration() ?: 30.days
         DefaultEncodePidInCbor(clock, issuerSigningKey, duration)
     }
 
@@ -298,14 +325,16 @@ fun beans(clock: Clock) = beans {
     bean<EncodeMobileDrivingLicenceInCbor>(isLazyInit = true) {
         log.info("Using internal encoder to encode mDL in CBOR")
         val issuerSigningKey = ref<IssuerSigningKey>()
-        val duration = env.getProperty("issuer.mdl.mso_mdoc.encoder.duration")
-            ?.let { Duration.parse(it).toKotlinDuration() }
-            ?: 5.days
+        val duration = env.duration("issuer.mdl.mso_mdoc.encoder.duration")?.toKotlinDuration() ?: 5.days
         DefaultEncodeMobileDrivingLicenceInCbor(clock, issuerSigningKey, duration)
     }
 
     bean(::DefaultGenerateQrCode)
     bean(::HandleNotificationRequest)
+    bean {
+        val cNonceExpiresIn = env.duration("issuer.cnonce.expiration") ?: Duration.ofMinutes(5L)
+        HandleNonceRequest(clock, cNonceExpiresIn, ref())
+    }
     bean {
         val resolvers = buildMap<CredentialIdentifier, CredentialRequestFactory> {
             if (enableMobileDrivingLicence) {
@@ -315,9 +344,6 @@ fun beans(clock: Clock) = beans {
                             unvalidatedProofs = unvalidatedProofs,
                             credentialResponseEncryption = requestedResponseEncryption,
                             docType = MobileDrivingLicenceV1.docType,
-                            claims = MobileDrivingLicenceV1.msoClaims.mapValues { entry ->
-                                entry.value.map { attribute -> attribute.name }
-                            },
                         )
                     }
             }
@@ -329,7 +355,6 @@ fun beans(clock: Clock) = beans {
                             unvalidatedProofs = unvalidatedProofs,
                             credentialResponseEncryption = requestedResponseEncryption,
                             docType = PidMsoMdocV1.docType,
-                            claims = PidMsoMdocV1.msoClaims.mapValues { entry -> entry.value.map { attribute -> attribute.name } },
                         )
                     }
             }
@@ -343,7 +368,6 @@ fun beans(clock: Clock) = beans {
                                 unvalidatedProofs = unvalidatedProofs,
                                 credentialResponseEncryption = requestedResponseEncryption,
                                 type = sdJwtVcPid.type,
-                                claims = sdJwtVcPid.claims.map { it.name }.toSet(),
                             )
                         }
                 }
@@ -351,6 +375,24 @@ fun beans(clock: Clock) = beans {
         }
 
         DefaultResolveCredentialRequestByCredentialIdentifier(resolvers)
+    }
+    bean(isLazyInit = true) {
+        GenerateSignedMetadataWithNimbus(
+            clock = ref(),
+            credentialIssuerId = ref<CredentialIssuerMetaData>().id,
+            signingKey = ref(),
+        )
+    }
+    if (enableStatusList) {
+        bean<GenerateStatusListToken> {
+            val serviceUrl = URL(env.getRequiredProperty("issuer.statusList.service.uri"))
+            log.info("Token Status List support enabled. Service URL: ${serviceUrl.toExternalForm()}")
+            GenerateStatusListTokenWithExternalService(
+                webClient = ref(),
+                serviceUrl = serviceUrl,
+                apiKey = env.getRequiredProperty("issuer.statusList.service.apiKey"),
+            )
+        }
     }
 
     //
@@ -398,6 +440,7 @@ fun beans(clock: Clock) = beans {
             credentialEndPoint = issuerPublicUrl.appendPath(WalletApi.CREDENTIAL_ENDPOINT),
             deferredCredentialEndpoint = issuerPublicUrl.appendPath(WalletApi.DEFERRED_ENDPOINT),
             notificationEndpoint = issuerPublicUrl.appendPath(WalletApi.NOTIFICATION_ENDPOINT),
+            nonceEndpoint = issuerPublicUrl.appendPath(WalletApi.NONCE_ENDPOINT),
             authorizationServers = listOf(env.readRequiredUrl("issuer.authorizationServer.publicUrl")),
             credentialResponseEncryption = env.credentialResponseEncryption(),
             specificCredentialIssuers = buildList {
@@ -416,15 +459,8 @@ fun beans(clock: Clock) = beans {
                 }
 
                 if (enableSdJwtVcPid) {
-                    val expiresIn = env.getProperty("issuer.pid.sd_jwt_vc.duration")?.let { duration ->
-                        Duration.parse(duration).takeUnless { it.isZero || it.isNegative }
-                    } ?: Duration.ofDays(30L)
-
-                    val notUseBefore = env.getProperty("issuer.pid.sd_jwt_vc.notUseBefore")?.let {
-                        runCatching {
-                            Duration.parse(it).takeUnless { it.isZero || it.isNegative }
-                        }.getOrNull()
-                    }
+                    val expiresIn = env.duration("issuer.pid.sd_jwt_vc.duration") ?: Duration.ofDays(30L)
+                    val notUseBefore = env.duration("issuer.pid.sd_jwt_vc.notUseBefore")
 
                     val issuerSigningKey = ref<IssuerSigningKey>()
                     val issueSdJwtVcPid = IssueSdJwtVcPid(
@@ -445,6 +481,7 @@ fun beans(clock: Clock) = beans {
                         generateNotificationId = ref(),
                         storeIssuedCredentials = ref(),
                         validateProofs = ref(),
+                        generateStatusListToken = provider<GenerateStatusListToken>().ifAvailable,
                     )
 
                     val deferred = env.getProperty<Boolean>("issuer.pid.sd_jwt_vc.deferred") ?: false
@@ -490,13 +527,15 @@ fun beans(clock: Clock) = beans {
     //
     // In Ports (use cases)
     //
-    bean(::GetCredentialIssuerMetaData)
+    bean {
+        val enableSignedMetadata = env.getProperty<Boolean>("issuer.metadata.signed-metadata.enabled") ?: true
+        val generateSignedMetadata = if (enableSignedMetadata) ref<GenerateSignedMetadata>() else null
+        GetCredentialIssuerMetaData(ref(), generateSignedMetadata)
+    }
     bean {
         IssueCredential(
-            clock = clock,
             credentialIssuerMetadata = ref(),
             resolveCredentialRequestByCredentialIdentifier = ref(),
-            generateCNonce = ref(),
             encryptCredentialResponse = ref(),
         )
     }
@@ -512,7 +551,7 @@ fun beans(clock: Clock) = beans {
     //
     bean {
         val metaDataApi = MetaDataApi(ref(), ref())
-        val walletApi = WalletApi(ref(), ref(), ref(), ref())
+        val walletApi = WalletApi(ref(), ref(), ref(), ref(), ref())
         val issuerUi = IssuerUi(credentialsOfferUri, ref(), ref(), ref())
         val issuerApi = IssuerApi(ref())
         metaDataApi.route.and(walletApi.route).and(issuerUi.router).and(issuerApi.router)
@@ -522,7 +561,8 @@ fun beans(clock: Clock) = beans {
     // DPoP Nonce
     //
     if (env.getProperty("issuer.dpop.nonce.enabled", Boolean::class.java, false)) {
-        with(InMemoryDPoPNonceRepository(clock, Duration.parse(env.getProperty("issuer.dpop.nonce.expiration", "PT5M")))) {
+        val dpopNonceExpiresIn = env.duration("issuer.dpop.nonce.expiration") ?: Duration.ofMinutes(5L)
+        with(InMemoryDPoPNonceRepository(clock, dpopNonceExpiresIn)) {
             bean { DPoPNoncePolicy.Enforcing(loadActiveDPoPNonce, generateDPoPNonce) }
             bean {
                 object {
@@ -561,9 +601,8 @@ fun beans(clock: Clock) = beans {
             if (it.isEmpty()) log.warn("DPoP support will not be enabled. Authorization Server does not support DPoP.")
             else log.info("DPoP support will be enabled. Supported algorithms: $it")
         }
-        val proofMaxAge = env.getProperty("issuer.dpop.proof-max-age", "PT1M").let { Duration.parse(it) }
-        val cachePurgeInterval =
-            env.getProperty("issuer.dpop.cache-purge-interval", "PT10M").let { Duration.parse(it) }
+        val proofMaxAge = env.duration("issuer.dpop.proof-max-age") ?: Duration.ofMinutes(1L)
+        val cachePurgeInterval = env.duration("issuer.dpop.cache-purge-interval") ?: Duration.ofMinutes(10L)
         val realm = env.getProperty("issuer.dpop.realm")?.takeIf { it.isNotBlank() }
 
         DPoPConfigurationProperties(algorithms, proofMaxAge, cachePurgeInterval, realm)
@@ -588,6 +627,7 @@ fun beans(clock: Clock) = beans {
                 authorize(WalletApi.CREDENTIAL_ENDPOINT, hasAnyAuthority(*scopes.toTypedArray()))
                 authorize(WalletApi.DEFERRED_ENDPOINT, hasAnyAuthority(*scopes.toTypedArray()))
                 authorize(WalletApi.NOTIFICATION_ENDPOINT, hasAnyAuthority(*scopes.toTypedArray()))
+                authorize(WalletApi.NONCE_ENDPOINT, permitAll)
                 authorize(MetaDataApi.WELL_KNOWN_OPENID_CREDENTIAL_ISSUER, permitAll)
                 authorize(MetaDataApi.WELL_KNOWN_JWT_VC_ISSUER, permitAll)
                 authorize(MetaDataApi.PUBLIC_KEYS, permitAll)
@@ -772,6 +812,9 @@ private fun <T> Environment.readNonEmptySet(key: String, f: (String) -> T?): Non
         .toNonEmptySetOrNull()
     return checkNotNull(nonEmptySet) { "Missing or incorrect values values for key `$key`" }
 }
+
+private fun Environment.duration(key: String): Duration? =
+    getProperty(key)?.let { Duration.parse(it) }?.takeUnless { it.isNegative || it.isZero }
 
 private fun HttpsUrl.appendPath(path: String): HttpsUrl =
     HttpsUrl.unsafe(

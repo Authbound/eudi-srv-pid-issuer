@@ -25,12 +25,14 @@ import com.nimbusds.jose.jwk.JWK
 import com.nimbusds.jwt.SignedJWT
 import eu.europa.ec.eudi.pidissuer.adapter.out.IssuerSigningKey
 import eu.europa.ec.eudi.pidissuer.adapter.out.certificate
-import eu.europa.ec.eudi.pidissuer.adapter.out.oauth.*
+import eu.europa.ec.eudi.pidissuer.adapter.out.oauth.OidcAddressClaim
 import eu.europa.ec.eudi.pidissuer.adapter.out.signingAlgorithm
 import eu.europa.ec.eudi.pidissuer.domain.CredentialIssuerId
 import eu.europa.ec.eudi.pidissuer.domain.SdJwtVcType
+import eu.europa.ec.eudi.pidissuer.domain.StatusListToken
 import eu.europa.ec.eudi.pidissuer.port.input.IssueCredentialError
 import eu.europa.ec.eudi.pidissuer.port.input.IssueCredentialError.Unexpected
+import eu.europa.ec.eudi.pidissuer.port.out.status.GenerateStatusListToken
 import eu.europa.ec.eudi.sdjwt.*
 import eu.europa.ec.eudi.sdjwt.vc.sanOfDNSName
 import eu.europa.ec.eudi.sdjwt.vc.sanOfUniformResourceIdentifier
@@ -43,6 +45,7 @@ import java.security.cert.X509Certificate
 import java.time.Clock
 import java.time.Instant
 import java.time.ZonedDateTime
+import kotlin.io.encoding.Base64
 
 private val log = LoggerFactory.getLogger(EncodePidInSdJwtVc::class.java)
 
@@ -54,6 +57,7 @@ class EncodePidInSdJwtVc(
     private val calculateExpiresAt: TimeDependant<Instant>,
     private val calculateNotUseBefore: TimeDependant<Instant>?,
     private val vct: SdJwtVcType,
+    private val generateStatusListToken: GenerateStatusListToken?,
 ) {
 
     /**
@@ -79,8 +83,7 @@ class EncodePidInSdJwtVc(
         }
 
         NimbusSdJwtOps.issuer(sdJwtFactory, signer, issuerSigningKey.signingAlgorithm) {
-            // TODO: This will change to dc+sd-jwt in a future release
-            type(JOSEObjectType(SdJwtVcSpec.MEDIA_SUBTYPE_VC_SD_JWT))
+            type(JOSEObjectType(SdJwtVcSpec.MEDIA_SUBTYPE_DC_SD_JWT))
             keyID(issuerSigningKey.key.keyID)
             x509CertChain(x509CertChain)
         }
@@ -91,16 +94,24 @@ class EncodePidInSdJwtVc(
         pidMetaData: PidMetaData,
         holderKey: JWK,
     ): Either<IssueCredentialError, String> = either {
-        val at = clock.instant().atZone(clock.zone)
+        val issuedAt = clock.instant().atZone(clock.zone)
+        val expiresAt = calculateExpiresAt(issuedAt)
+        val statusListToken = generateStatusListToken?.let {
+            it(vct.value, expiresAt.atZone(clock.zone))
+                .getOrElse { error ->
+                    raise(Unexpected("Unable to generate Status List Token", error))
+                }
+        }
         val sdJwtSpec = selectivelyDisclosed(
             pid = pid,
             pidMetaData = pidMetaData,
             vct = vct,
             credentialIssuerId = credentialIssuerId,
             holderPubKey = holderKey,
-            iat = at,
-            exp = calculateExpiresAt(at),
-            nbf = calculateNotUseBefore?.let { calculate -> calculate(at) },
+            iat = issuedAt,
+            exp = expiresAt,
+            nbf = calculateNotUseBefore?.let { calculate -> calculate(issuedAt) },
+            statusListToken = statusListToken,
         )
         val issuedSdJwt: SdJwt<SignedJWT> = issuer.issue(sdJwtSpec).getOrElse {
             raise(Unexpected("Error while creating SD-JWT", it))
@@ -115,6 +126,8 @@ class EncodePidInSdJwtVc(
     }
 }
 
+private val base64UrlNoPadding by lazy { Base64.UrlSafe.withPadding(Base64.PaddingOption.ABSENT) }
+
 private fun selectivelyDisclosed(
     pid: Pid,
     pidMetaData: PidMetaData,
@@ -124,6 +137,7 @@ private fun selectivelyDisclosed(
     iat: ZonedDateTime,
     exp: Instant,
     nbf: Instant?,
+    statusListToken: StatusListToken?,
 ): DisclosableObject {
     require(exp.epochSecond > iat.toInstant().epochSecond) { "exp should be after iat" }
     nbf?.let {
@@ -140,64 +154,64 @@ private fun selectivelyDisclosed(
         claim(RFC7519.EXPIRATION_TIME, exp.epochSecond)
         cnf(holderPubKey)
         claim(SdJwtVcSpec.VCT, vct.value)
+        statusListToken?.let {
+            objClaim("status") {
+                objClaim("status_list") {
+                    claim("idx", it.index.toInt())
+                    claim("uri", it.statusList.toString())
+                }
+            }
+        }
 
         //
         // Selectively Disclosed claims
         //
-        sdClaim(OidcFamilyName.name, pid.familyName.value)
-        sdClaim(OidcGivenName.name, pid.givenName.value)
-        sdClaim(OidcBirthDate.name, pid.birthDate.toString())
-        objClaim(Attributes.AgeEqualOrOver.name) {
-            pid.ageOver18?.let { sdClaim(Attributes.AgeOver18.name, it) }
+        sdClaim(SdJwtVcPidClaims.FamilyName.name, pid.familyName.value)
+        sdClaim(SdJwtVcPidClaims.GivenName.name, pid.givenName.value)
+        sdClaim(SdJwtVcPidClaims.BirthDate.name, pid.birthDate.toString())
+        sdObjClaim(SdJwtVcPidClaims.PlaceOfBirth.attribute.name) {
+            sdClaim(SdJwtVcPidClaims.PlaceOfBirth.Locality.name, pid.birthPlace)
         }
-        pid.ageInYears?.let { sdClaim(Attributes.AgeInYears.name, it.toInt()) }
-        pid.ageBirthYear?.let { sdClaim(Attributes.AgeBirthYear.name, it.value.toString()) }
-        pid.familyNameBirth?.let { sdClaim(OidcAssuranceBirthFamilyName.name, it.value) }
-        pid.givenNameBirth?.let { sdClaim(OidcAssuranceBirthGivenName.name, it.value) }
-
-        pid.oidcAssurancePlaceOfBirth()?.let { placeOfBirth ->
-            objClaim(OidcAssurancePlaceOfBirth.NAME) {
-                placeOfBirth.locality?.let { sdClaim("locality", it) }
-                placeOfBirth.region?.let { sdClaim("region", it) }
-                placeOfBirth.country?.let { sdClaim("country", it) }
-            }
+        sdArrClaim(SdJwtVcPidClaims.Nationalities.name) {
+            pid.nationalities.forEach { claim(it.value) }
         }
         pid.oidcAddressClaim()?.let { address ->
-            objClaim(OidcAddressClaim.NAME) {
-                address.formatted?.let { sdClaim("formatted", it) }
-                address.country?.let { sdClaim("country", it) }
-                address.region?.let { sdClaim("region", it) }
-                address.locality?.let { sdClaim("locality", it) }
-                address.postalCode?.let { sdClaim("postal_code", it) }
-                address.streetAddress?.let { sdClaim("street_address", it) }
-                address.houseNumber?.let { sdClaim("house_number", it) }
+            sdObjClaim(SdJwtVcPidClaims.Address.attribute.name) {
+                address.formatted?.let { sdClaim(SdJwtVcPidClaims.Address.Formatted.name, it) }
+                address.streetAddress?.let { sdClaim(SdJwtVcPidClaims.Address.Street.name, it) }
+                address.locality?.let { sdClaim(SdJwtVcPidClaims.Address.Locality.name, it) }
+                address.region?.let { sdClaim(SdJwtVcPidClaims.Address.Region.name, it) }
+                address.postalCode?.let { sdClaim(SdJwtVcPidClaims.Address.PostalCode.name, it) }
+                address.country?.let { sdClaim(SdJwtVcPidClaims.Address.Country.name, it) }
             }
         }
-        pid.genderAsString?.let { sdClaim(OidcGender.name, it) }
-        pid.nationality?.let {
-            sdArrClaim(OidcAssuranceNationalities.name) {
-                claim(it.value)
+        pidMetaData.personalAdministrativeNumber?.let { sdClaim(SdJwtVcPidClaims.PersonalAdministrativeNumber.name, it.value) }
+        pid.portrait?.let {
+            val value = when (it) {
+                is PortraitImage.JPEG -> base64UrlNoPadding.encode(it.value)
+                is PortraitImage.JPEG2000 -> base64UrlNoPadding.encode(it.value)
             }
+            sdClaim(SdJwtVcPidClaims.Portrait.name, value)
         }
-        sdClaim(IssuingAuthorityAttribute.name, pidMetaData.issuingAuthority.valueAsString())
-        pidMetaData.documentNumber?.let { sdClaim(DocumentNumberAttribute.name, it.value) }
-        pidMetaData.administrativeNumber?.let { sdClaim(AdministrativeNumberAttribute.name, it.value) }
-        sdClaim(IssuingCountryAttribute.name, pidMetaData.issuingCountry.value)
-        pidMetaData.issuingJurisdiction?.let { sdClaim(IssuingJurisdictionAttribute.name, it) }
+        pid.familyNameBirth?.let { sdClaim(SdJwtVcPidClaims.BirthFamilyName.name, it.value) }
+        pid.givenNameBirth?.let { sdClaim(SdJwtVcPidClaims.BirthGivenName.name, it.value) }
+        pid.sex?.let { sdClaim(SdJwtVcPidClaims.Sex.name, it.value.toInt()) }
+        pid.emailAddress?.let { sdClaim(SdJwtVcPidClaims.EmailAddress.name, it) }
+        pid.mobilePhoneNumber?.let { sdClaim(SdJwtVcPidClaims.MobilePhoneNumber.name, it.value) }
+        sdObjClaim(SdJwtVcPidClaims.AgeEqualOrOver.attribute.name) {
+            pid.ageOver18?.let { sdClaim(SdJwtVcPidClaims.AgeEqualOrOver.Over18.name, it) }
+        }
+        pid.ageInYears?.let { sdClaim(SdJwtVcPidClaims.AgeInYears.name, it.toInt()) }
+        pid.ageBirthYear?.let { sdClaim(SdJwtVcPidClaims.AgeBirthYear.name, it.value.toString()) }
+
+        sdClaim(SdJwtVcPidClaims.ExpiryDate.name, pidMetaData.expiryDate.toString())
+        sdClaim(SdJwtVcPidClaims.IssuingAuthority.name, pidMetaData.issuingAuthority.valueAsString())
+        sdClaim(SdJwtVcPidClaims.IssuingCountry.name, pidMetaData.issuingCountry.value)
+        pidMetaData.documentNumber?.let { sdClaim(SdJwtVcPidClaims.DocumentNumber.name, it.value) }
+        pidMetaData.issuingJurisdiction?.let { sdClaim(SdJwtVcPidClaims.IssuingJurisdiction.name, it) }
+        pidMetaData.issuanceDate?.let { sdClaim(SdJwtVcPidClaims.IssuanceDate.name, it.toString()) }
     }
 }
-
-private fun Pid.oidcAssurancePlaceOfBirth(): OidcAssurancePlaceOfBirth? =
-    if (birthPlace != null || birthCountry != null || birthState != null || birthCity != null) {
-        // TODO
-        //  birth_place and birth_city are both mapped to locality
-        //  https://github.com/eu-digital-identity-wallet/eudi-doc-architecture-and-reference-framework/pull/160#discussion_r1853638874
-        OidcAssurancePlaceOfBirth(
-            locality = birthPlace ?: birthCity?.value,
-            country = birthCountry?.value,
-            region = birthState?.value,
-        )
-    } else null
 
 private fun Pid.oidcAddressClaim(): OidcAddressClaim? =
     if (
@@ -211,8 +225,7 @@ private fun Pid.oidcAddressClaim(): OidcAddressClaim? =
             region = residentState?.value,
             locality = residentCity?.value,
             postalCode = residentPostalCode?.value,
-            streetAddress = residentStreet?.value,
-            houseNumber = residentHouseNumber,
+            streetAddress = listOfNotNull(residentStreet, residentHouseNumber).joinToString(", ").takeIf { it.isNotBlank() },
         )
     } else null
 
