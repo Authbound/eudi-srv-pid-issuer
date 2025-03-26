@@ -31,9 +31,9 @@ services:
       retries: 12
       start_interval: 30s
     volumes:
-      - ./keycloak/extra/health-check.sh:/opt/keycloak/health-check.sh
-      - ./keycloak/realms/:/opt/keycloak/data/import
-      - ./keycloak/certs/:/etc/ssl/certs/
+      - ./docker/keycloak/extra/health-check.sh:/opt/keycloak/health-check.sh
+      - ./docker/keycloak/realms/:/opt/keycloak/data/import
+      - ./docker/keycloak/certs/:/etc/ssl/certs/
     networks:
       - default
 
@@ -101,8 +101,8 @@ services:
       pid-issuer:
         condition: service_started
     volumes:
-      - ./haproxy/haproxy.conf:/usr/local/etc/haproxy/haproxy.cfg
-      - ./haproxy/certs/:/etc/ssl/certs/
+      - ./docker/haproxy/haproxy.conf:/usr/local/etc/haproxy/haproxy.cfg
+      - ./docker/haproxy/certs/:/etc/ssl/certs/
     networks:
       - default
       - coolify
