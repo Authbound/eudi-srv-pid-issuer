@@ -21,9 +21,9 @@ services:
       - SPRING_SECURITY_OAUTH2_RESOURCESERVER_OPAQUETOKEN_CLIENT_SECRET=zIKAV9DIIIaJCzHCVBPlySgU8KgY68U2
       - SERVER_FORWARD_HEADERS_STRATEGY=FRAMEWORK
       - ISSUER_PUBLICURL=https://issuer.authbound.io/pid-issuer
-      - ISSUER_AUTHORIZATIONSERVER_PUBLICURL=https://issuer.authbound.io/idp/realms/pid-issuer-realm
-      - ISSUER_AUTHORIZATIONSERVER_METADATA=https://issuer.authbound.io/idp/realms/pid-issuer-realm/.well-known/openid-configuration
-      - ISSUER_AUTHORIZATIONSERVER_INTROSPECTION=https://issuer.authbound.io/idp/realms/pid-issuer-realm/protocol/openid-connect/token/introspect
+      - ISSUER_AUTHORIZATIONSERVER_PUBLICURL=https://keycloak:8080/idp/realms/pid-issuer-realm
+      - ISSUER_AUTHORIZATIONSERVER_METADATA=https://keycloak:8080/idp/realms/pid-issuer-realm/.well-known/openid-configuration
+      - ISSUER_AUTHORIZATIONSERVER_INTROSPECTION=https://keycloak:8080/idp/realms/pid-issuer-realm/protocol/openid-connect/token/introspect
       - ISSUER_CREDENTIALRESPONSEENCRYPTION_SUPPORTED=true
       - ISSUER_CREDENTIALRESPONSEENCRYPTION_REQUIRED=true
       - ISSUER_CREDENTIALRESPONSEENCRYPTION_ALGORITHMSSUPPORTED=RSA-OAEP-256
@@ -42,7 +42,7 @@ services:
       - ISSUER_MDL_NOTIFICATIONS_ENABLED=true
       - ISSUER_CREDENTIALOFFER_URI=openid-credential-offer://
       - ISSUER_SIGNING_KEY=GenerateRandom
-      - ISSUER_KEYCLOAK_SERVER_URL=https://issuer.authbound.io/idp
+      - ISSUER_KEYCLOAK_SERVER_URL=https://keycloak:8080/idp
       - ISSUER_KEYCLOAK_AUTHENTICATION_REALM=master
       - ISSUER_KEYCLOAK_CLIENT_ID=admin-cli
       - ISSUER_KEYCLOAK_USERNAME=admin
