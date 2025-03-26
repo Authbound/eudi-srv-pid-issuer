@@ -24,12 +24,14 @@ services:
       - KC_HTTPS_CERTIFICATE_KEY_FILE=/etc/ssl/certs/keycloak.tls.key
       - KC_BOOTSTRAP_ADMIN_USERNAME=admin
       - KC_BOOTSTRAP_ADMIN_PASSWORD=password
+      - KC_HEALTH_ENABLED=true
+    user: root
     healthcheck:
-      test: "bash /opt/keycloak/health-check.sh"
-      interval: 5s
-      timeout: 10s
-      retries: 12
-      start_interval: 30s
+      test: ["CMD", "curl", "-f", "http://localhost:8080/idp/health/ready"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 60s
     volumes:
       - ./keycloak/extra/health-check.sh:/opt/keycloak/health-check.sh
       - ./keycloak/realms/:/opt/keycloak/data/import
@@ -43,7 +45,7 @@ services:
       - caddy=pid-issuer.authbound.io
       - caddy.handle=/idp/*
       - caddy.handle.reverse_proxy=keycloak:8080
-      - caddy.handle.reverse_proxy.health_path=/health
+      - caddy.handle.reverse_proxy.health_path=/health/ready
       - caddy.handle.reverse_proxy.health_interval=30s
 
   pid-issuer:
