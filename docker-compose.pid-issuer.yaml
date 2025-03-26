@@ -11,6 +11,8 @@ services:
     image: ghcr.io/eu-digital-identity-wallet/eudi-srv-pid-issuer:edge
     pull_policy: always
     container_name: pid-issuer
+    ports:
+      - "9090:8080"
     environment:
       - SPRING_PROFILES_ACTIVE=insecure
       - SPRING_WEBFLUX_BASE_PATH=/pid-issuer
@@ -20,8 +22,8 @@ services:
       - SERVER_FORWARD_HEADERS_STRATEGY=FRAMEWORK
       - ISSUER_PUBLICURL=https://issuer.authbound.io/pid-issuer
       - ISSUER_AUTHORIZATIONSERVER_PUBLICURL=https://issuer.authbound.io/idp/realms/pid-issuer-realm
-      - ISSUER_AUTHORIZATIONSERVER_METADATA=https://keycloak:8080/idp/realms/pid-issuer-realm/.well-known/openid-configuration
-      - ISSUER_AUTHORIZATIONSERVER_INTROSPECTION=https://keycloak:8080/idp/realms/pid-issuer-realm/protocol/openid-connect/token/introspect
+      - ISSUER_AUTHORIZATIONSERVER_METADATA=https://issuer.authbound.io/idp/realms/pid-issuer-realm/.well-known/openid-configuration
+      - ISSUER_AUTHORIZATIONSERVER_INTROSPECTION=https://issuer.authbound.io/idp/realms/pid-issuer-realm/protocol/openid-connect/token/introspect
       - ISSUER_CREDENTIALRESPONSEENCRYPTION_SUPPORTED=true
       - ISSUER_CREDENTIALRESPONSEENCRYPTION_REQUIRED=true
       - ISSUER_CREDENTIALRESPONSEENCRYPTION_ALGORITHMSSUPPORTED=RSA-OAEP-256
@@ -40,7 +42,7 @@ services:
       - ISSUER_MDL_NOTIFICATIONS_ENABLED=true
       - ISSUER_CREDENTIALOFFER_URI=openid-credential-offer://
       - ISSUER_SIGNING_KEY=GenerateRandom
-      - ISSUER_KEYCLOAK_SERVER_URL=https://keycloak:8080/idp
+      - ISSUER_KEYCLOAK_SERVER_URL=https://issuer.authbound.io/idp
       - ISSUER_KEYCLOAK_AUTHENTICATION_REALM=master
       - ISSUER_KEYCLOAK_CLIENT_ID=admin-cli
       - ISSUER_KEYCLOAK_USERNAME=admin
@@ -56,14 +58,19 @@ services:
     networks:
       - default
       - coolify
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/pid-issuer/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     labels:
-      # Caddy Docker Proxy labels for routing
       - caddy.enable=true
       - caddy=issuer.authbound.io
-      - caddy.handle=/pid-issuer/*
-      - caddy.handle.reverse_proxy=pid-issuer:8080
-      - caddy.handle.reverse_proxy.health_path=/actuator/health
-      - caddy.handle.reverse_proxy.health_interval=30s
-      # Metadata endpoint
-      - caddy.handle=/.well-known/jwt-vc-issuer/pid-issuer
-      - caddy.handle.respond={"issuer":"https://issuer.authbound.io/pid-issuer","jwks_uri":"https://issuer.authbound.io/pid-issuer/public_keys.jwks"} 
+      - caddy.handle_path=/pid-issuer/*
+      - caddy.handle_path.reverse_proxy=pid-issuer:8080
+      - caddy.handle_path.reverse_proxy.health_path=/pid-issuer/actuator/health
+      - caddy.handle_path.reverse_proxy.health_interval=30s
+      - caddy.handle_path=/.well-known/jwt-vc-issuer/pid-issuer
+      - caddy.handle_path.respond={"issuer":"https://issuer.authbound.io/pid-issuer","jwks_uri":"https://issuer.authbound.io/pid-issuer/public_keys.jwks"}
+      - caddy.handle_path.respond.status=200 
