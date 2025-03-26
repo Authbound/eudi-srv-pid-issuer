@@ -59,18 +59,18 @@ services:
       - default
       - coolify
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/pid-issuer/actuator/health"]
+      test: ["CMD", "curl", "-f", "http://issuer.authbound.io/pid-issuer/actuator/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
     labels:
-      - caddy.enable=true
-      - caddy=issuer.authbound.io
-      - caddy.handle_path=/pid-issuer/*
-      - caddy.handle_path.reverse_proxy=pid-issuer:8080
-      - caddy.handle_path.reverse_proxy.health_path=/pid-issuer/actuator/health
-      - caddy.handle_path.reverse_proxy.health_interval=30s
-      - caddy.handle_path=/.well-known/jwt-vc-issuer/pid-issuer
-      - caddy.handle_path.respond={"issuer":"https://issuer.authbound.io/pid-issuer","jwks_uri":"https://issuer.authbound.io/pid-issuer/public_keys.jwks"}
-      - caddy.handle_path.respond.status=200 
+        - caddy.enable=true
+        - caddy=issuer.authbound.io
+        - caddy.handle=/pid-issuer/*
+        - caddy.handle.reverse_proxy=pid-issuer:8080
+        - caddy.handle.reverse_proxy.health_path=/pid-issuer/actuator/health
+        - caddy.handle.reverse_proxy.health_interval=30s
+        - caddy.handle=/.well-known/jwt-vc-issuer/pid-issuer
+        - caddy.handle.respond={"issuer":"https://issuer.authbound.io/pid-issuer","jwks_uri":"https://issuer.authbound.io/pid-issuer/public_keys.jwks"}
+        - caddy.handle.respond.status=200
