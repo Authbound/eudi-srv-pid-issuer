@@ -94,7 +94,7 @@ services:
     container_name: haproxy
     ports:
       - "8443:443"
-      - "8080:80"
+      - "8088:80"
     depends_on:
       keycloak:
         condition: service_healthy
