@@ -111,3 +111,4 @@ services:
       - caddy=issuer.authbound.io
       - caddy.handle=/*
       - caddy.handle.reverse_proxy=haproxy:8443
+      - caddy.handle.reverse_proxy=pid-issuer:8080
