@@ -40,7 +40,7 @@ services:
   pid-issuer:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: DockerFile
     pull_policy: always
     container_name: pid-issuer
     depends_on:
