@@ -1,0 +1,78 @@
+# Build stage
+FROM eclipse-temurin:21-jdk AS builder
+
+WORKDIR /app
+
+# Copy gradle files first for better caching
+COPY gradlew .
+COPY gradle ./gradle
+COPY build.gradle.kts .
+COPY settings.gradle.kts .
+COPY gradle.properties .
+
+# Make gradlew executable
+RUN chmod +x ./gradlew
+
+# Download dependencies (will be cached if no changes)
+RUN ./gradlew dependencies
+
+# Copy source code
+COPY src ./src
+COPY FileHeader.txt .
+
+# Build the application
+RUN ./gradlew bootJar
+
+# Runtime stage
+FROM eclipse-temurin:21-jre
+
+WORKDIR /app
+
+# Install curl for health checks
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
+# Copy the built jar from the builder stage
+COPY --from=builder /app/build/libs/*.jar /app/app.jar
+
+# Default environment variables
+ENV SPRING_PROFILES_ACTIVE=insecure \
+    SPRING_WEBFLUX_BASE_PATH=/pid-issuer \
+    SERVER_PORT=8080 \
+    SERVER_FORWARD_HEADERS_STRATEGY=FRAMEWORK \
+    ISSUER_PUBLICURL=https://issuer.authbound.io/pid-issuer \
+    ISSUER_AUTHORIZATIONSERVER_PUBLICURL=https://issuer.authbound.io/idp/realms/pid-issuer-realm \
+    ISSUER_CREDENTIALRESPONSEENCRYPTION_SUPPORTED=true \
+    ISSUER_CREDENTIALRESPONSEENCRYPTION_REQUIRED=true \
+    ISSUER_CREDENTIALRESPONSEENCRYPTION_ALGORITHMSSUPPORTED=RSA-OAEP-256 \
+    ISSUER_CREDENTIALRESPONSEENCRYPTION_ENCRYPTIONMETHODS=A128CBC-HS256 \
+    ISSUER_PID_MSO_MDOC_ENABLED=true \
+    ISSUER_PID_MSO_MDOC_ENCODER_DURATION=P30D \
+    ISSUER_PID_MSO_MDOC_NOTIFICATIONS_ENABLED=true \
+    ISSUER_PID_SD_JWT_VC_ENABLED=true \
+    ISSUER_PID_SD_JWT_VC_NOTUSEBEFORE=PT20S \
+    ISSUER_PID_SD_JWT_VC_DEFERRED=true \
+    ISSUER_PID_SD_JWT_VC_NOTIFICATIONS_ENABLED=true \
+    ISSUER_PID_ISSUINGCOUNTRY=GR \
+    ISSUER_PID_ISSUINGJURISDICTION=GR-I \
+    ISSUER_MDL_ENABLED=true \
+    ISSUER_MDL_MSO_MDOC_ENCODER_DURATION=P5D \
+    ISSUER_MDL_NOTIFICATIONS_ENABLED=true \
+    ISSUER_CREDENTIALOFFER_URI=openid-credential-offer:// \
+    ISSUER_SIGNING_KEY=GenerateRandom \
+    ISSUER_DPOP_PROOF_MAX_AGE=PT1M \
+    ISSUER_DPOP_CACHE_PURGE_INTERVAL=PT10M \
+    ISSUER_DPOP_REALM=pid-issuer \
+    ISSUER_DPOP_NONCE_ENABLED=false \
+    ISSUER_CREDENTIALENDPOINT_BATCHISSUANCE_ENABLED=true \
+    ISSUER_CREDENTIALENDPOINT_BATCHISSUANCE_BATCHSIZE=10 \
+    ISSUER_CNONCE_EXPIRATION=PT5M
+
+# Set health check
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=40s \
+    CMD curl -f http://localhost:8080/pid-issuer/actuator/health || exit 1
+
+# Expose the application port
+EXPOSE 8080
+
+# Run the application
+ENTRYPOINT ["java", "-jar", "/app/app.jar"]
