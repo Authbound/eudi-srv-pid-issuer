@@ -20,8 +20,8 @@ services:
       - KC_HTTP_RELATIVE_PATH=/idp
       - KC_HOSTNAME=https://issuer.authbound.io/idp
       - KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true
-      - KC_HTTPS_CERTIFICATE_FILE=/etc/ssl/certs/keycloak.tls.crt
-      - KC_HTTPS_CERTIFICATE_KEY_FILE=/etc/ssl/certs/keycloak.tls.key
+      - KC_HTTPS_CERTIFICATE_FILE=/opt/keycloak/conf/certs/keycloak.tls.crt
+      - KC_HTTPS_CERTIFICATE_KEY_FILE=/opt/keycloak/conf/certs/keycloak.tls.key
       - KC_BOOTSTRAP_ADMIN_USERNAME=admin
       - KC_BOOTSTRAP_ADMIN_PASSWORD=password
     healthcheck:
@@ -33,7 +33,7 @@ services:
     volumes:
       - ./docker/keycloak/extra/health-check.sh:/opt/keycloak/health-check.sh
       - ./docker/keycloak/realms/:/opt/keycloak/data/import
-      - ./docker/keycloak/certs/:/etc/ssl/certs/
+      - ./docker/keycloak/certs/:/opt/keycloak/conf/certs/
     networks:
       - default
 
