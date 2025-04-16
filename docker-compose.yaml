@@ -3,9 +3,9 @@ version: '3.8'
 networks:
   default:
     driver: bridge
-  coolify:
+  coolify: 
     external: true
-
+    
 services:
   keycloak:
     image: quay.io/keycloak/keycloak:26.1.4-0
@@ -18,10 +18,10 @@ services:
       - KC_PROXY_HEADERS=xforwarded
       - KC_HTTP_ENABLED=true
       - KC_HTTP_RELATIVE_PATH=/idp
-      - KC_HOSTNAME=https://issuer.authbound.io/idp
+      - KC_HOSTNAME=https://localhost/idp
       - KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true
-      - KC_HTTPS_CERTIFICATE_FILE=/opt/keycloak/conf/certs/keycloak.tls.crt
-      - KC_HTTPS_CERTIFICATE_KEY_FILE=/opt/keycloak/conf/certs/keycloak.tls.key
+      - KC_HTTPS_CERTIFICATE_FILE=/etc/ssl/certs/keycloak.tls.crt
+      - KC_HTTPS_CERTIFICATE_KEY_FILE=/etc/ssl/certs/keycloak.tls.key
       - KC_BOOTSTRAP_ADMIN_USERNAME=admin
       - KC_BOOTSTRAP_ADMIN_PASSWORD=password
     healthcheck:
@@ -33,14 +33,21 @@ services:
     volumes:
       - ./docker/keycloak/extra/health-check.sh:/opt/keycloak/health-check.sh
       - ./docker/keycloak/realms/:/opt/keycloak/data/import
-      - ./docker/keycloak/certs/:/opt/keycloak/conf/certs/
+      - ./docker/keycloak/certs/:/etc/ssl/certs/
     networks:
       - default
+      - coolify
+    labels:
+      - caddy.enable=true
+      - caddy=issuer.authbound.io
+      - caddy.handle_idp=/idp/*
+      - caddy.handle_idp.reverse_proxy=keycloak:8080
+      - caddy.handle_kc_wellknown=/.well-known/oauth-authorization-server/idp/realms/pid-issuer-realm
+      - caddy.handle_kc_wellknown.rewrite=/idp/realms/pid-issuer-realm/.well-known/oauth-authorization-server{path}{query}
+      - caddy.handle_kc_wellknown.reverse_proxy=keycloak:8080
 
   pid-issuer:
-    build:
-      context: .
-      dockerfile: DockerFile
+    image: ghcr.io/eu-digital-identity-wallet/eudi-srv-pid-issuer:edge
     pull_policy: always
     container_name: pid-issuer
     depends_on:
@@ -53,10 +60,10 @@ services:
       - SPRING_SECURITY_OAUTH2_RESOURCESERVER_OPAQUETOKEN_CLIENT_ID=pid-issuer-srv
       - SPRING_SECURITY_OAUTH2_RESOURCESERVER_OPAQUETOKEN_CLIENT_SECRET=zIKAV9DIIIaJCzHCVBPlySgU8KgY68U2
       - SERVER_FORWARD_HEADERS_STRATEGY=FRAMEWORK
-      - ISSUER_PUBLICURL=https://issuer.authbound.io/pid-issuer
-      - ISSUER_AUTHORIZATIONSERVER_PUBLICURL=https://issuer.authbound.io/idp/realms/pid-issuer-realm
-      - ISSUER_AUTHORIZATIONSERVER_METADATA=https://keycloak:8443/idp/realms/pid-issuer-realm/.well-known/openid-configuration
-      - ISSUER_AUTHORIZATIONSERVER_INTROSPECTION=https://keycloak:8443/idp/realms/pid-issuer-realm/protocol/openid-connect/token/introspect
+      - ISSUER_PUBLICURL=https://localhost/pid-issuer
+      - ISSUER_AUTHORIZATIONSERVER_PUBLICURL=https://localhost/idp/realms/pid-issuer-realm
+      - ISSUER_AUTHORIZATIONSERVER_METADATA=http://keycloak:8080/idp/realms/pid-issuer-realm/.well-known/openid-configuration
+      - ISSUER_AUTHORIZATIONSERVER_INTROSPECTION=http://keycloak:8080/idp/realms/pid-issuer-realm/protocol/openid-connect/token/introspect
       - ISSUER_CREDENTIALRESPONSEENCRYPTION_SUPPORTED=true
       - ISSUER_CREDENTIALRESPONSEENCRYPTION_REQUIRED=true
       - ISSUER_CREDENTIALRESPONSEENCRYPTION_ALGORITHMSSUPPORTED=RSA-OAEP-256
@@ -75,7 +82,7 @@ services:
       - ISSUER_MDL_NOTIFICATIONS_ENABLED=true
       - ISSUER_CREDENTIALOFFER_URI=openid-credential-offer://
       - ISSUER_SIGNING_KEY=GenerateRandom
-      - ISSUER_KEYCLOAK_SERVER_URL=https://keycloak:8443/idp
+      - ISSUER_KEYCLOAK_SERVER_URL=http://keycloak:8080/idp
       - ISSUER_KEYCLOAK_AUTHENTICATION_REALM=master
       - ISSUER_KEYCLOAK_CLIENT_ID=admin-cli
       - ISSUER_KEYCLOAK_USERNAME=admin
@@ -90,27 +97,17 @@ services:
       - ISSUER_CNONCE_EXPIRATION=PT5M
     networks:
       - default
-
-  haproxy:
-    image: haproxy:2.8.3
-    container_name: haproxy
-    ports:
-      - "8443:443"
-      - "8088:80"
-    depends_on:
-      keycloak:
-        condition: service_healthy
-      pid-issuer:
-        condition: service_started
-    volumes:
-      - ./docker/haproxy/haproxy.conf:/usr/local/etc/haproxy/haproxy.cfg
-      - ./docker/haproxy/certs/:/etc/ssl/certs/
-    networks:
-      - default
       - coolify
     labels:
       - caddy.enable=true
       - caddy=issuer.authbound.io
-      - caddy.handle=/*
-      - caddy.handle.reverse_proxy=haproxy:8443
-      - caddy.handle.reverse_proxy=pid-issuer:8080
+      - caddy.handle_pid=/pid-issuer/*
+      - caddy.handle_pid.reverse_proxy=pid-issuer:8080
+      - caddy.handle_pid.reverse_proxy.health_path=/pid-issuer/actuator/health
+      - caddy.handle_pid.reverse_proxy.health_interval=30s
+      - caddy.handle_metadata=/.well-known/jwt-issuer/pid-issuer
+      - caddy.handle_metadata.respond={"issuer":"https://issuer.authbound.io/pid-issuer","jwks_uri":"https://issuer.authbound.io/pid-issuer/public_keys.jwks"} 200
+      - caddy.handle_metadata.respond.header.Content-Type=application/json
+
+# Removed commented out haproxy service
+# // ... existing code ... # Assuming the haproxy service definition was here
